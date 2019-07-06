@@ -28,6 +28,9 @@ from classifier_utils import PaddingInputExample
 from classifier_utils import convert_single_example
 from prepro_utils import preprocess_text, encode_ids
 
+import pandas as pd
+#import xlrd
+
 
 # Model
 flags.DEFINE_string("model_config_path", default=None,
@@ -293,6 +296,39 @@ class Yelp5Processor(DataProcessor):
         examples.append(
             InputExample(guid=str(i), text_a=text_a, text_b=None, label=label))
     return examples
+
+class EmwProcessor(DataProcessor):
+  def get_labels(self):
+    return [0, 1]
+
+  def get_train_examples(self, data_dir):
+    return self._create_examples(os.path.join(data_dir, "train"))
+
+  def get_dev_examples(self, data_dir):
+    return self._create_examples(os.path.join(data_dir, "test"))
+
+  def _create_examples(self, data_dir):
+    examples = []
+    #read all files in the directory
+    for filename in tf.gfile.ListDirectory(data_dir):
+      data_df = self._read_data(os.path.join(data_dir, filename))
+      #get labelled data
+      labelled_data = data_df[data_df['label'].notnull()]
+      labelled_data['label'] = labelled_data['label'].replace(2, 0)
+      urls = labelled_data['url'].to_list()
+      texts = labelled_data['text'].to_list()
+      labels = labelled_data['label'].to_list()
+      for i in range(labelled_data.shape[0]):
+        examples.append(InputExample(guid=urls[i], text_a=texts[i], text_b=None, label=labels[i]))
+    return examples
+
+
+  def _read_data(self, data_file):
+    if data_file.endswith('json'):
+        df = pd.read_json(data_file, orient='records')
+    elif data_file.endswith('xlsx') or data_file.endswith('xls'):
+        df = pd.read_excel(data_file, index_col=0, dtype={'text': str})
+    return df
 
 
 class ImdbProcessor(DataProcessor):
@@ -650,7 +686,8 @@ def main(_):
       "mnli_mismatched": MnliMismatchedProcessor,
       'sts-b': StsbProcessor,
       'imdb': ImdbProcessor,
-      "yelp5": Yelp5Processor
+      "yelp5": Yelp5Processor,
+      "emw": EmwProcessor
   }
 
   if not FLAGS.do_train and not FLAGS.do_eval and not FLAGS.do_predict:
