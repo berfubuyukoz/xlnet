@@ -815,7 +815,7 @@ def main(_):
           steps=eval_steps,
           checkpoint_path=filename)
 
-      ret["step"] = global_step
+      ret["global_step"] = global_step
       ret["path"] = filename
 
       eval_results.append(ret)
