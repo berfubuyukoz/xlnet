@@ -29,7 +29,9 @@ from classifier_utils import convert_single_example
 from prepro_utils import preprocess_text, encode_ids
 
 import pandas as pd
+from sklearn.metrics import precision_recall_fscore_support, matthews_corrcoef
 #import xlrd
+import score_utils as scu
 
 
 # Model
@@ -70,7 +72,9 @@ flags.DEFINE_string("spiece_model_file", default="",
 flags.DEFINE_string("model_dir", default="",
       help="Directory for saving the finetuned model.")
 flags.DEFINE_string("data_dir", default="",
-      help="Directory for input data.")
+      help="Directory for input data."),
+flags.DEFINE_integer("global_step_no", default="-1",
+      help="Global step to use in eval."),
 
 # TPUs and machines
 flags.DEFINE_bool("use_tpu", default=False, help="whether to use TPU.")
@@ -124,7 +128,8 @@ flags.DEFINE_string("predict_dir", default=None,
 flags.DEFINE_bool("eval_all_ckpt", default=False,
       help="Eval all ckpts. If False, only evaluate the last one.")
 flags.DEFINE_string("predict_ckpt", default=None,
-      help="Ckpt path for do_predict. If None, use the last one.")
+      help="Ckpt path for do_predict. If None, use the last one."),
+flags.DEFINE_string("eval_scores_file_name", default=None, help="Evaluation scores file name.")
 
 # task specific
 flags.DEFINE_string("task_name", default=None, help="Task name")
@@ -579,9 +584,83 @@ def get_model_fn(n_class):
         accuracy = tf.metrics.accuracy(**eval_input_dict)
 
         loss = tf.metrics.mean(values=per_example_loss, weights=is_real_example)
+
+        f1 = tf.contrib.metrics.f1_score(label_ids,predictions)
+
+        #print('Label ids object type: {}'.format(type(label_ids)))
+        #print('Predictions object type: {}'.format(type(predictions)))
+
+
+        '''
+        cm = tf.math.confusion_matrix(label_ids,predictions,num_classes=n_class)
+        print('Converting confusion matrix into its values.')
+        sess = tf.Session()
+        sess.run(tf.global_variables_initializer())
+        sess.run(tf.local_variables_initializer())
+        _cm = sess.run(cm)
+        sess.close()
+        print("Created value of confusion matrix: {}".format(_cm))
+        '''
+
+
+        '''
+        sess = tf.Session()
+        #sess.run(tf.global_variables_initializer())
+        _cm = sess.run(cm)
+        sess.close()
+        print("Created value of confusion matrix: {}".format(_cm))
+        '''
+
+
+        '''
+        This giant part below was supposed to calculate f1 precision etc but it failed because eval() and run() gives error.
+        Error:
+        tensorflow.python.framework.errors_impl.FailedPreconditionError: GetNext() failed because the iterator has not been initialized. Ensure that you have run the initializer operation for this iterator before getting the next element.
+        [[node IteratorGetNext (defined at content/drive/My Drive/thesis/xlnet/run_classifier.py:866
+        '''
+
+        '''
+        sess = tf.InteractiveSession()
+        label_ids_np=label_ids.eval()
+        predictions_np = predictions.eval()
+        sess.close()
+
+        print('Conversion succeeded.')
+        print('Label_ids_np type: {}'.format(type(label_ids_np)))
+        print('Predictions_np type: {}'.format(type(predictions_np)))
+
+        sess = tf.InteractiveSession()
+        print('Tf conversion: from {} to {} '.format(type(tf.constant([1,2,3])),type(tf.constant([1,2,3]).eval())))
+        sess.close()
+        
+        #precision, recall, f1, _ = precision_recall_fscore_support(label_ids, predictions, average="macro", labels=list(range(0,n_class)))
+        #mcc = matthews_corrcoef(label_ids_np, predictions_np)
+        
+        sess = tf.get_default_session()
+        with sess.as_default():
+            label_ids_np = label_ids.eval()
+            predictions_np = predictions.eval()
+        
+
+        sess = tf.Session()
+        sess.run(tf.global_variables_initializer())
+        label_ids_np = sess.run(label_ids)
+        predictions_np = sess.run(predictions)
+        sess.close()
+
+        precision_macro = scu.get_precision_macro(label_ids_np,predictions_np)
+        recall_macro = scu.get_recall_macro(label_ids_np,predictions_np)
+        f1_macro = scu.get_f1_macro(label_ids_np,predictions_np)
+        mcc = scu.get_mcc_score(label_ids_np,predictions_np)
+        print(f1_macro)
+        print(mcc)
+        '''
+
         return {
             'eval_accuracy': accuracy,
-            'eval_loss': loss}
+            'eval_loss': loss,
+            'f1': f1
+            }
 
       def regression_metric_fn(
           per_example_loss, label_ids, logits, is_real_example):
@@ -806,10 +885,12 @@ def main(_):
 
     # Decide whether to evaluate all ckpts
     if not FLAGS.eval_all_ckpt:
-      steps_and_files = steps_and_files[-1:]
+      #steps_and_files = steps_and_files[-1:]
+      steps_and_files = [steps_and_files[FLAGS.global_step_no]]
 
     eval_results = []
     for global_step, filename in sorted(steps_and_files, key=lambda x: x[0]):
+      print('File name: {}\n Global step: {}'.format(filename, global_step))
       ret = estimator.evaluate(
           input_fn=eval_input_fn,
           steps=eval_steps,
@@ -821,9 +902,15 @@ def main(_):
       eval_results.append(ret)
 
       tf.logging.info("=" * 80)
+
       log_str = "Eval result | "
       for key, val in sorted(ret.items(), key=lambda x: x[0]):
         log_str += "{} {} | ".format(key, val)
+
+      eval_scores_file = join(FLAGS.model_dir,FLAGS.eval_scores_file_name)
+      with tf.gfile.GFile(eval_scores_file, "w") as file:
+          file.write(log_str)
+
       tf.logging.info(log_str)
 
     key_name = "eval_pearsonr" if FLAGS.is_regression else "eval_accuracy"
