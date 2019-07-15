@@ -317,6 +317,7 @@ class EmwProcessor(DataProcessor):
     #read all files in the directory
     for filename in tf.gfile.ListDirectory(data_dir):
       data_df = self._read_data(os.path.join(data_dir, filename))
+      
       #get labelled data
       labelled_data = data_df[data_df['label'].notnull()]
       labelled_data['label'] = labelled_data['label'].replace(2, 0)
